@@ -66,7 +66,43 @@ def compute_zeroed_checksum(type, code, ID, seqNum, data):
 
   return myChecksum
 
-def build_packet():
+class ICMPData:
+  def __init__(self, type, code, checksum, id, seq, payload):
+    self.type = type
+    self.code = code
+    self.checksum = checksum
+    self.id = id
+    self.seq = seq
+    self.payload = payload
+    self.zeroed_checksum = None
+
+  def validate(ID, seqNum):
+    if self.zeroed_checksum is None:
+      self.zeroed_checksum = compute_zeroed_checksum(self.type, self.code, self.id, self.seq, struct.pack('d', self.payload))
+
+    return self.zeroed_checksum == self.checksum and ID == self.id and self.seq == seqNum
+
+  def __str__(self):
+    return f'Type: {self.type}\nCode: {self.code}\nChecksum: {self.checksum}\nID: {self.id}\nSeq: {self.seq}\nPayload: {self.payload}\n'
+
+def read_icmp(bytes):
+  header_size = struct.calcsize('bbHHh')
+  icmp_data = struct.unpack('bbHHh', bytes[:header_size])
+
+  return ICMPData(icmp_data[0], icmp_data[1], icmp_data[2], icmp_data[3], icmp_data[4], bytes[header_size:])
+
+def build_request():
+  seq_num = next(seq) & 0xffff
+  send_time = time.time()
+  myID = os.getpid() & 0xffff
+  data = struct.pack("d", send_time)
+
+  myChecksum = compute_zeroed_checksum(ICMP_ECHO_REQUEST, 0, myID, seq_num, data)
+
+  return ICMPData(ICMP_ECHO_REQUEST, 0, myChecksum, myID, seq_num, data)
+
+
+def build_packet(icmp):
   #Fill in start
   # In the sendOnePing() method of the ICMP Ping exercise ,firstly the header of our
   # packet to be sent was made, secondly the checksum was appended to the header and
@@ -76,38 +112,33 @@ def build_packet():
   # Append checksum to the header.
 
   # Don’t send the packet yet , just return the final packet in this function.
-  seq_num = next(seq) & 0xffff
-  send_time = time.time()
-  myID = os.getpid() & 0xffff
-  data = struct.pack("d", send_time)
 
-  myChecksum = compute_zeroed_checksum(ICMP_ECHO_REQUEST, 0, myID, seq_num, data)
-
-  header = struct.pack("bbHHh", ICMP_ECHO_REQUEST, 0, myChecksum, myID, seq_num)
+  header = struct.pack("bbHHh", icmp.type, icmp.code, icmp.checksum, icmp.id, icmp.seq)
 
   #Fill in end
 
   # So the function ending should look like this
 
-  packet = header + data
+  packet = header + icmp.payload
   return packet
 
 def build_timeout(hops):
   return [str(hops), '*', 'Request timed out']
 
 def build_output(hops, rtt, hostip, hostname):
-  return [str(hops), f'{rtt}ms', hostip, 'hostname not returnable' if hostname is None else hostname]
+  return [str(hops), f'{str(round(rtt,2))}ms', hostip, 'hostname not returnable' if hostname is None else hostname]
 
 def get_route(hostname):
   timeLeft = TIMEOUT
   tracelist1 = [] #This is your list to use when iterating through each trace
   tracelist2 = [] #This is your list to contain all traces
   icmp = getprotobyname("icmp")
+  destAddr = gethostbyname(hostname)
+  reached_dest = False
+  sent_times = {}
 
   for ttl in range(1,MAX_HOPS):
     for tries in range(TRIES):
-      destAddr = gethostbyname(hostname)
-
       #Fill in start
       # Make a raw socket named mySocket
       mySocket = socket(AF_INET, SOCK_RAW, icmp)
@@ -116,9 +147,11 @@ def get_route(hostname):
       mySocket.setsockopt(IPPROTO_IP, IP_TTL, struct.pack('I', ttl))
       #mySocket.settimeout(TIMEOUT)
       try:
-        d = build_packet()
-        mySocket.sendto(d, (hostname, 0))
-        t= time.time()
+        req = build_request()
+        d = build_packet(req)
+        mySocket.sendto(d, (destAddr, 0))
+        send_time = time.time()
+        sent_times[req.seq] = send_time
         startedSelect = time.time()
         whatReady = select.select([mySocket], [], [], timeLeft)
         howLongInSelect = (time.time() - startedSelect)
@@ -143,41 +176,48 @@ def get_route(hostname):
       else:
         #Fill in start
         #Fetch the icmp type from the IP packet
+        icmp_data = read_icmp(recvPacket[20:])
+        types = icmp_data.type
         #Fill in end
         try: #try to fetch the hostname
           #Fill in start
+          hop_name = gethostbyaddr(addr[0])[0]
           #Fill in end
         except herror:   #if the host does not provide a hostname
           #Fill in start
+          hop_name = None
           #Fill in end
 
-        if types == 11:
-          bytes = struct.calcsize("d")
-          timeSent = struct.unpack("d", recvPacket[28:28 +
-          bytes])[0]
+        if types == 11 or types == 3:
+          sent_icmp = read_icmp(icmp_data.payload[20:])
+          timeSent = sent_times[sent_icmp.seq]
+          delay = (timeReceived - timeSent)*1000
           #Fill in start
           #You should add your responses to your lists here
-          #Fill in end
-        elif types == 3:
-          bytes = struct.calcsize("d")
-          timeSent = struct.unpack("d", recvPacket[28:28 + bytes])[0]
-          #Fill in start
-          #You should add your responses to your lists here
+          tracelist2.append(build_output(ttl, delay, addr[0], hop_name))
           #Fill in end
         elif types == 0:
-          bytes = struct.calcsize("d")
-          timeSent = struct.unpack("d", recvPacket[28:28 + bytes])[0]
-          #Fill in start
-          #You should add your responses to your lists here and return your list if your destination IP is met
-          #Fill in end
+          timeSent = sent_times[icmp_data.seq]
+          delay = (timeReceived - timeSent)*1000
+          tracelist2.append(build_output(ttl, delay, addr[0], hop_name))
         else:
           #Fill in start
+          continue
           #If there is an exception/error to your if statements, you should append that to your list here
           #Fill in end
+
+        if addr[0] == destAddr:
+          reached_dest = True
+
         break
       finally:
         mySocket.close()
 
+    if reached_dest is True:
+      break
+
+  return tracelist2
+
 if __name__ == '__main__':
-    result = get_route("google.com")
+    result = get_route("google.co.il")
     print(result)
