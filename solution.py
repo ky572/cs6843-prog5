@@ -14,6 +14,16 @@ TRIES = 1
 # request packet, which is exactly what we had used in the ICMP ping exercise.
 # We shall use the same packet that we built in the Ping exercise
 
+def sequence(max):
+  x = 0
+  while True:
+    yield x
+    x += 1
+    if x > max:
+      x = 0
+
+seq = sequence(0xffff)
+
 def checksum(string):
 # In this function we make the checksum of our packet
   csum = 0
@@ -37,6 +47,25 @@ def checksum(string):
   answer = answer >> 8 | (answer << 8 & 0xff00)
   return answer
 
+def compute_zeroed_checksum(type, code, ID, seqNum, data):
+  myChecksum = 0
+
+  # Make a dummy header with a 0 checksum
+  # struct -- Interpret strings as packed binary data
+  header = struct.pack("bbHHh", type, code, myChecksum, ID, seqNum)
+  # Calculate the checksum on the data and the dummy header.
+  myChecksum = checksum(header + data)
+
+  # Get the right checksum, and put in the header
+
+  if sys.platform == 'darwin':
+    # Convert 16-bit integers from host to network  byte order
+    myChecksum = htons(myChecksum) & 0xffff
+  else:
+    myChecksum = htons(myChecksum)
+
+  return myChecksum
+
 def build_packet():
   #Fill in start
   # In the sendOnePing() method of the ICMP Ping exercise ,firstly the header of our
@@ -47,6 +76,15 @@ def build_packet():
   # Append checksum to the header.
 
   # Don’t send the packet yet , just return the final packet in this function.
+  seq_num = next(seq) & 0xffff
+  send_time = time.time()
+  myID = os.getpid() & 0xffff
+  data = struct.pack("d", send_time)
+
+  myChecksum = compute_zeroed_checksum(ICMP_ECHO_REQUEST, 0, myID, seq_num, data)
+
+  header = struct.pack("bbHHh", ICMP_ECHO_REQUEST, 0, myChecksum, myID, seq_num)
+
   #Fill in end
 
   # So the function ending should look like this
@@ -76,7 +114,7 @@ def get_route(hostname):
       #Fill in end
 
       mySocket.setsockopt(IPPROTO_IP, IP_TTL, struct.pack('I', ttl))
-      mySocket.settimeout(TIMEOUT)
+      #mySocket.settimeout(TIMEOUT)
       try:
         d = build_packet()
         mySocket.sendto(d, (hostname, 0))
@@ -100,7 +138,7 @@ def get_route(hostname):
           break
           #Fill in end
       except timeout:
-          continue
+        continue
 
       else:
         #Fill in start
@@ -139,3 +177,7 @@ def get_route(hostname):
         break
       finally:
         mySocket.close()
+
+if __name__ == '__main__':
+    result = get_route("google.com")
+    print(result)
