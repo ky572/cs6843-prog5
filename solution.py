@@ -217,7 +217,3 @@ def get_route(hostname):
       break
 
   return tracelist2
-
-if __name__ == '__main__':
-    result = get_route("google.co.il")
-    print(result)
