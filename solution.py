@@ -54,10 +54,17 @@ def build_packet():
   packet = header + data
   return packet
 
+def build_timeout(hops):
+  return [str(hops), '*', 'Request timed out']
+
+def build_output(hops, rtt, hostip, hostname):
+  return [str(hops), f'{rtt}ms', hostip, 'hostname not returnable' if hostname is None else hostname]
+
 def get_route(hostname):
   timeLeft = TIMEOUT
   tracelist1 = [] #This is your list to use when iterating through each trace
   tracelist2 = [] #This is your list to contain all traces
+  icmp = getprotobyname("icmp")
 
   for ttl in range(1,MAX_HOPS):
     for tries in range(TRIES):
@@ -65,6 +72,7 @@ def get_route(hostname):
 
       #Fill in start
       # Make a raw socket named mySocket
+      mySocket = socket(AF_INET, SOCK_RAW, icmp)
       #Fill in end
 
       mySocket.setsockopt(IPPROTO_IP, IP_TTL, struct.pack('I', ttl))
@@ -77,18 +85,20 @@ def get_route(hostname):
         whatReady = select.select([mySocket], [], [], timeLeft)
         howLongInSelect = (time.time() - startedSelect)
         if whatReady[0] == []: # Timeout
-            tracelist1.append("* * * Request timed out.")
-            #Fill in start
-            #You should add the list above to your all traces list
-            #Fill in end
+          #Fill in start
+          #You should add the list above to your all traces list
+          tracelist2.append(build_timeout(ttl))
+          break
+          #Fill in end
         recvPacket, addr = mySocket.recvfrom(1024)
         timeReceived = time.time()
         timeLeft = timeLeft - howLongInSelect
         if timeLeft <= 0:
-            tracelist1.append("* * * Request timed out.")
-            #Fill in start
-            #You should add the list above to your all traces list
-            #Fill in end
+          #Fill in start
+          #You should add the list above to your all traces list
+          tracelist2.append(build_timeout(ttl))
+          break
+          #Fill in end
       except timeout:
           continue
 
