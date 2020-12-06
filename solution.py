@@ -216,4 +216,5 @@ def get_route(hostname):
     if reached_dest is True:
       break
 
+  print(tracelist2)
   return tracelist2
